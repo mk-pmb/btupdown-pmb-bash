@@ -1,0 +1,21 @@
+{ "name": "btupdown-pmb",
+  "version": "0.0.1",
+  "description": "Watch bluetooth devices (dis)connecting and run scripts accordingly.",
+  "keywords": [],
+
+  "author": "M.K. (https://github.com/mk-pmb)",
+  "homepage": "https://github.com/mk-pmb/btupdown-pmb-bash/#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mk-pmb/btupdown-pmb-bash.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mk-pmb/btupdown-pmb-bash/issues"
+  },
+  "contributors": [],
+
+  "private": true, "license": "ISC",
+
+
+  "npm vs. BOM = Unexpected token": "-*- coding: UTF-8 -*-"
+}
