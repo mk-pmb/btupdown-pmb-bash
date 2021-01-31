@@ -9,11 +9,13 @@ function btupdown_lurk () {
   cd / || return $?
 
   local PROG_NAME='btupdown-pmb'
+  local CFG_DIR="${XDG_CONFIG_DIR:-$HOME/.config}/bluetooth/$PROG_NAME"
+
   local RUN_DIR="$XDG_RUNTIME_DIR"
   [ -n "$RUN_DIR" ] || RUN_DIR="/run/user/${UID:-E_NO_UID}"
   export XDG_RUNTIME_DIR="$RUN_DIR"
   local STATE_DIR="$RUN_DIR/$PROG_NAME"
-  mkdir --parents "$STATE_DIR/by-mac" || return $?
+  mkdir --parents -- "$STATE_DIR/by-mac" || return $?
 
   local BTC_PID=
   while true; do
@@ -32,7 +34,7 @@ function btupdown_ensure_lurking () {
   [ -n "$BTC_PID" ] && kill -0 "$BTC_PID" 2>/dev/null && return 0
   exec 14< <(exec < <(exec sleep 10m) stdbuf -i0 -o0 -e0 bluetoothctl 2>&1)
   BTC_PID="$!"
-  ps hu "$BTC_PID"
+  # ps hu "$BTC_PID"
   exec < <(exec <&14 sed -ure '
     s~\x1B\[[0-9;]*[KmP]~~g
     s~\x1B~<!!>~g
@@ -56,40 +58,53 @@ function dev_prop_chg () {
   local DEV_MAC="${MSG%% *}"; MSG="${MSG#* }"
   local LC_MAC="${DEV_MAC,,}"
   LC_MAC="${LC_MAC//:/}"
-  local STATE_FILE="$STATE_DIR/by-mac"
-  mkdir --parents "$STATE_FILE" || return $?
-  STATE_FILE+="/$LC_MAC"
+  local PROPS_FILE="$STATE_DIR/by-mac"
+  mkdir --parents -- "$PROPS_FILE" || return $?
+  PROPS_FILE+="/$LC_MAC"
 
   local TRIG=
   if [ "$MSG" == 'Connected: yes' ]; then
     TRIG='up'
-    [ ! -f "$STATE_FILE" ] || rm -- "$STATE_FILE" || return $?
-    printf 'ConnectedSince: %(%s)T\n' -1 >"$STATE_FILE" || return $?
+    [ ! -f "$PROPS_FILE" ] || rm -- "$PROPS_FILE" || return $?
+    printf 'ConnectedSince: %(%s)T\n' -1 >"$PROPS_FILE" || return $?
   fi
-  echo "$MSG" >>"$STATE_FILE" || return $?
+  echo "$MSG" >>"$PROPS_FILE" || return $?
   if [ "$MSG" == 'Connected: no' ]; then
     TRIG='down'
-    printf 'ConnectedUntil: %(%s)T\n' -1 >>"$STATE_FILE" || return $?
+    printf 'ConnectedUntil: %(%s)T\n' -1 >>"$PROPS_FILE" || return $?
   fi
   [ -z "$TRIG" ] || run_event_hooks || return $?
-  [ "$TRIG" != down ] || rm -- "$STATE_FILE" || return $?
+  [ "$TRIG" != down ] || rm -- "$PROPS_FILE" || return $?
 }
 
 
 function run_event_hooks () {
-  echo "! $DEV_MAC $TRIG $STATE_FILE !"
+  logger --id --tag "$PROG_NAME" <<<"device $DEV_MAC event $TRIG"
+  local HOOKS=(
+    "$CFG_DIR"/[0-9A-Za-z]*/[0-9A-Za-z]*.{"$LC_MAC",any-mac}.{"$TRIG",any}
+    )
+  local HOOK=
+  for HOOK in "${HOOKS[@]}"; do
+    [ -x "$HOOK" ] || continue
+    run_one_event_hook "$HOOK"
+  done
+}
 
+
+function run_one_event_hook () {
   # The outer parens is required to ensure the stdin redirection is done
   # before the "&" forking. If we would rely on the forked child for the
   # redirection, a race condition may occurr: In the short time the child
   # needs for startup, we might already have processed new events for the
   # same device, and thus might have deleted or replaced the file path.
-  ( ( sleep 2s
-      ls -l /proc/self/fd
-      nl -ba
+  ( (
+      export BT_MAC="$DEV_MAC"
+      export BT_EVENT="$TRIG"
+      export BT_PROPS="$PROPS_FILE"
+      exec "$@" "$DEV_MAC" "$TRIG" "$PROPS_FILE"
     ) &
     disown $!
-  ) <"$STATE_FILE"
+  ) <"$PROPS_FILE"
 }
 
 
