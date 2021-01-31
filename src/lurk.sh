@@ -8,6 +8,7 @@ function btupdown_lurk () {
   # cd -- "$SELFPATH" || return $?
   cd / || return $?
 
+  local LURK_PID="$$"
   local PROG_NAME='btupdown-pmb'
   local CFG_DIR="${XDG_CONFIG_DIR:-$HOME/.config}/bluetooth/$PROG_NAME"
 
@@ -16,6 +17,8 @@ function btupdown_lurk () {
   export XDG_RUNTIME_DIR="$RUN_DIR"
   local STATE_DIR="$RUN_DIR/$PROG_NAME"
   mkdir --parents -- "$STATE_DIR/by-mac" || return $?
+  local PID_FILE="$STATE_DIR/lurk.pid"
+  echo "$LURK_PID" >"$PID_FILE" || return $?
 
   local BTC_PID=
   while true; do
@@ -30,19 +33,24 @@ function btupdown_lurk () {
 }
 
 
+function check_pid_file () {
+  [ "$(cat -- "$PID_FILE"; echo :)" == "$LURK_PID"$'\n:' ] && return 0
+  echo "W: $PROG_NAME[$LURK_PID]: pidfile was modified! flinching!" >&2
+  return 2
+}
+
+
 function btupdown_ensure_lurking () {
   [ -n "$BTC_PID" ] && kill -0 "$BTC_PID" 2>/dev/null && return 0
-  exec 14< <(exec < <(exec sleep 10m) stdbuf -i0 -o0 -e0 bluetoothctl 2>&1)
+  check_pid_file || return $?
+  local BTC_FD=
+  exec {BTC_FD}< <(exec < <(
+    exec sleep 9009d
+    ) stdbuf -i0 -o0 -e0 bluetoothctl 2>&1)
   BTC_PID="$!"
   # ps hu "$BTC_PID"
-  exec < <(exec <&14 sed -ure '
-    s~\x1B\[[0-9;]*[KmP]~~g
-    s~\x1B~<!!>~g
-    s~\r\s*~\r\n\r~g
-    s~\x01\x02~~g
-    s~[\x00-\x08\x0B\x0C\x0E-\x1F]~<"&">~g
-    ')
-  exec 14<&-
+  exec < <(exec <&"$BTC_FD" "$SELFPATH"/de-zalgo.sed)
+  exec {BTC_FD}<&-
   sleep 1s
 }
 
@@ -79,6 +87,7 @@ function dev_prop_chg () {
 
 
 function run_event_hooks () {
+  check_pid_file || return $?
   logger --id --tag "$PROG_NAME" <<<"device $DEV_MAC event $TRIG"
   local HOOKS=(
     "$CFG_DIR"/[0-9A-Za-z]*/[0-9A-Za-z]*.{"$LC_MAC",any-mac}.{"$TRIG",any}
