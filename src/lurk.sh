@@ -8,6 +8,7 @@ function btupdown_lurk () {
   # cd -- "$SELFPATH" || return $?
   cd / || return $?
 
+  local DBGLV="${DEBUGLEVEL:-0}"
   local LURK_PID="$$"
   local PROG_NAME='btupdown-pmb'
   local CFG_DIR="${XDG_CONFIG_DIR:-$HOME/.config}/bluetooth/$PROG_NAME"
@@ -20,16 +21,25 @@ function btupdown_lurk () {
   local PID_FILE="$STATE_DIR/lurk.pid"
   echo "$LURK_PID" >"$PID_FILE" || return $?
 
-  local BTC_PID=
+  local CMD_FD= BTC_PID=
+  exec {CMD_FD}<> <(:)
+  trap {'quit_btctl SIG',}USR1
   while true; do
     btupdown_ensure_lurking || return $?
     IFS= read -r LN || continue
-    # printf '%(%T)T << %s >>\n' -1 "${LN//$'\r'/«}"
+    [ "$DBGLV" -lt 4 ] || printf -- '%(%T)T << %s >>\n' -1 "${LN//$'\r'/«}"
     case "$LN" in
       *$'\r' ) ;;
       $'\r[CHG] Device '* ) dev_prop_chg "${LN#* * }" || return $?;;
     esac
   done
+}
+
+
+function quit_btctl () {
+  local REASON="$1"
+  printf -- '%(%T)T Stop lurking due to %s.\n' -1 "$REASON"
+  echo quit >&"$CMD_FD"
 }
 
 
@@ -44,10 +54,10 @@ function btupdown_ensure_lurking () {
   [ -n "$BTC_PID" ] && kill -0 "$BTC_PID" 2>/dev/null && return 0
   check_pid_file || return $?
   local BTC_FD=
-  exec {BTC_FD}< <(exec < <(
-    exec sleep 9009d
-    ) stdbuf -i0 -o0 -e0 bluetoothctl 2>&1)
+  exec {BTC_FD}< <(exec stdbuf -i0 -o0 -e0 bluetoothctl <&"$CMD_FD" 2>&1)
   BTC_PID="$!"
+  [ "$DBGLV" -lt 2 ] || printf -- \
+    '%(%T)T Started lurking, input FD is %s.\n' -1 "$BTC_FD"
   # ps hu "$BTC_PID"
   exec < <(exec <&"$BTC_FD" "$SELFPATH"/de-zalgo.sed)
   exec {BTC_FD}<&-
